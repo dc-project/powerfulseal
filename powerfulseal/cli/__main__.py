@@ -23,7 +23,7 @@ import os
 
 from ..node import NodeInventory
 from ..node.inventory import read_inventory_file_to_dict
-from ..clouddrivers import OpenStackDriver
+from ..clouddrivers import OpenStackDriver, AWSDriver, NoCloudDriver
 from ..execute import RemoteExecutor
 from ..k8s import K8sClient, K8sInventory
 from .pscmd import PSCmd
@@ -43,7 +43,6 @@ def main(argv):
             PowerfulSeal
         """),
     )
-
     # general settings
     prog.add_argument(
         '-c', '--config',
@@ -81,12 +80,32 @@ def main(argv):
         action='store_true',
         help='Allow connection to hosts not present in known_hosts',
     )
+    args_ssh.add_argument(
+        '--ssh-path-to-private-key',
+        default=os.environ.get("PS_PRIVATE_KEY"),
+        help='Path to ssh private key',
+    )
 
     # cloud driver related config
-    cloud_options = prog.add_mutually_exclusive_group(required=False)
+    cloud_options = prog.add_mutually_exclusive_group(required=True)
     cloud_options.add_argument('--open-stack-cloud',
         default=os.environ.get("OPENSTACK_CLOUD"),
-        help="the name of the open stack cloud from your config file to use",
+        action='store_true',
+        help="use OpenStack cloud provider",
+    )
+    cloud_options.add_argument('--aws-cloud',
+        default=os.environ.get("AWS_CLOUD"),
+        action='store_true',
+        help="use AWS cloud provider",
+    )
+    cloud_options.add_argument('--no-cloud',
+        default=os.environ.get("NO_CLOUD"),
+        action='store_true',
+        help="don't use cloud provider",
+    )
+    prog.add_argument('--open-stack-cloud-name',
+        default=os.environ.get("OPENSTACK_CLOUD_NAME"),
+        help="the name of the open stack cloud from your config file to use (if using config file)",
     )
 
     # KUBERNETES CONFIG
@@ -129,11 +148,20 @@ def main(argv):
     logger = logging.getLogger(__name__)
     logger.setLevel(log_level)
 
-    # build cloud inventory
-    logger.debug("Fetching the remote nodes")
-    driver = OpenStackDriver(
-        cloud=args.open_stack_cloud,
-    )
+    # build cloud provider driver
+    logger.debug("Building the driver")
+    if args.open_stack_cloud:
+        logger.info("Building OpenStack driver")
+        driver = OpenStackDriver(
+            cloud=args.open_stack_cloud_name,
+        )
+    elif args.aws_cloud:
+        logger.info("Building AWS driver")
+        driver = AWSDriver()
+    else:
+        logger.info("No driver - some functionality disabled")
+        driver = NoCloudDriver()
+
 
     # build a k8s client
     kube_config = args.kube_config
@@ -163,6 +191,7 @@ def main(argv):
     executor = RemoteExecutor(
         user=args.remote_user,
         ssh_allow_missing_host_keys=args.ssh_allow_missing_host_keys,
+        ssh_path_to_private_key=args.ssh_path_to_private_key,
     )
 
     if args.interactive:
